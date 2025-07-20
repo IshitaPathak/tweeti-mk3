@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "name": "tweeti-main-server",
+  "builds": [
+    {
+      "src": "server.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/webhook",
+      "dest": "/server.js"
+    },
+    {
+      "src": "/cron_post",
+      "dest": "/server.js"
+    },
+    {
+      "src": "/all_user",
+      "dest": "/server.js"
+    },
+    {
+      "src": "/set_tone",
+      "dest": "/server.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/server.js"
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  },
+  "regions": ["iad1"],
+  "public": false
+} 
