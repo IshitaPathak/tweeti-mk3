@@ -1,0 +1,9 @@
+node_modules/
+.env
+private-key.pem
+*.log
+.DS_Store
+dist/
+coverage/
+/src/generated/prisma
+.history 
