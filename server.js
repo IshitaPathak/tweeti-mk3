@@ -395,20 +395,11 @@ app.post('/webhook', async (req, res) => {
                 return res.status(200).send('No commits to process');
             }
 
-            // Process the latest commit
-            const latestCommit = commits[commits.length - 1];
-            console.log(`🔍 Processing commit: ${latestCommit.id.substring(0, 7)} - "${latestCommit.message}"`);
-
-            // Skip if commit message contains skip flags
-            if (latestCommit.message.includes('[skip-tweet]') ||
-                latestCommit.message.includes('[no-tweet]') ||
-                latestCommit.message.includes('[skip ci]')) {
-                console.log('⏭️ Skipping commit due to skip flag in commit message');
-                return res.status(200).send('Commit skipped');
-            }
-
+            // Process all commits in the push
+            console.log(`🔍 Processing ${commits.length} commits from push event`);
+            
             // Get GitHub username from pusher info
-            const githubUsername = pusher.name || pusher.username || latestCommit.author.username;
+            const githubUsername = pusher.name || pusher.username || commits[0].author.username;
 
             if (!githubUsername) {
                 console.log('❌ Could not determine GitHub username');
@@ -427,22 +418,34 @@ app.post('/webhook', async (req, res) => {
                 }
 
                 const userRecord = userResult.rows[0];
-
-                // Create commit message with repository info
-                const commitMessage = `${latestCommit.message}`;
-                // const repoName = repository.name; // Get repository name
-                const commitWithRepo = `${commitMessage}`;
-
-                // Get current commits array and add new commit
+                console.log("this is the user record", userRecord)
+                // Get current commits array
                 const currentCommits = userRecord.commits || [];
-                const updatedCommits = [...currentCommits, commitWithRepo];
+                console.log("this is the current commits", currentCommits)
+                // Process all commits and filter out skip flags
+                const newCommits = [];
+                for (const commit of commits) {
+                    // Skip if commit message contains skip flags
+                    if (commit.message.includes('[skip-tweet]') ||
+                        commit.message.includes('[no-tweet]') ||
+                        commit.message.includes('[skip ci]')) {
+                        console.log(`⏭️ Skipping commit: ${commit.id.substring(0, 7)} - "${commit.message}"`);
+                        continue;
+                    }
+                    
+                    // Add commit message to new commits array
+                    newCommits.push(commit.message);
+                    console.log(`📝 Adding commit: ${commit.id.substring(0, 7)} - "${commit.message}"`);
+                }
 
-                // Update user record to add commit message to commits array
+                // Combine current commits with new commits
+                const updatedCommits = [...currentCommits, ...newCommits];
+                console.log("this is the updated commits", updatedCommits)
+                // Update user record to add commit messages to commits array
                 const updateQuery = 'UPDATE x_credentials SET commits = $1 WHERE github_username = $2 RETURNING *';
                 const updateResult = await client.query(updateQuery, [updatedCommits, githubUsername]);
 
-                console.log(`✅ Commit message stored successfully for user: ${githubUsername}`);
-                console.log(`📝 Commit: ${commitMessage}`);
+                console.log(`✅ ${newCommits.length} commit messages stored successfully for user: ${githubUsername}`);
                 console.log(`📊 Total commits stored: ${updatedCommits.length}`);
 
             } catch (dbError) {
