@@ -440,10 +440,128 @@ app.post('/webhook', async (req, res) => {
 
                 // Combine current commits with new commits
                 const updatedCommits = [...currentCommits, ...newCommits];
-                console.log("this is the updated commits", updatedCommits)
-                // Update user record to add commit messages to commits array
-                const updateQuery = 'UPDATE x_credentials SET commits = $1 WHERE github_username = $2 RETURNING *';
-                const updateResult = await client.query(updateQuery, [updatedCommits, githubUsername]);
+                console.log("this is the updated commits", updatedCommits);
+
+                // Generate tweet for the latest commit or combined commits
+                let generatedTweet = '';
+                if (newCommits.length > 0) {
+                    try {
+                        console.log(`🤖 Generating tweet for ${newCommits.length} new commit(s)`);
+                        
+                        // Get user's tone settings for personalized tweet generation
+                        const userTone = userRecord.tone ? JSON.parse(userRecord.tone) : {};
+                        
+                        // Create commit context for tweet generation
+                        const commitContext = {
+                            repository: repository.full_name,
+                            message: newCommits[newCommits.length - 1], // Use the latest commit message
+                            author: githubUsername,
+                            commitType: detectCommitType(newCommits[newCommits.length - 1]),
+                            stats: {
+                                changedFiles: commits.length,
+                                additions: commits.reduce((sum, c) => sum + (c.stats?.additions || 0), 0),
+                                deletions: commits.reduce((sum, c) => sum + (c.stats?.deletions || 0), 0),
+                                filesAdded: commits.reduce((sum, c) => sum + (c.added?.length || 0), 0),
+                                filesModified: commits.reduce((sum, c) => sum + (c.modified?.length || 0), 0),
+                                filesRemoved: commits.reduce((sum, c) => sum + (c.removed?.length || 0), 0)
+                            }
+                        };
+
+                        // Build dynamic prompt based on user's tone settings
+                        const toneInstructions = buildToneInstructions(userTone);
+
+                        const prompt = `You are a social media manager for a tech company, tasked with crafting professional, friendly,
+                         and tech-savvy tweet-style updates based on GitHub commit messages. Your goal is to translate technical updates into clear, 
+                         engaging content that resonates with the specified audience, while adhering to the provided tone and style guidelines.
+
+---
+
+### **Commit Details:**
+**Repository:** ${commitContext.repository}
+**Latest Work:** ${commitContext.message}
+**Author:** ${commitContext.author}
+**Commit Type:** ${commitContext.commitType}
+
+---
+
+### **Tweet Generation Guidelines:**
+
+1.  **Read and Understand:** Carefully analyze the commit message to grasp the core updates.
+2.  **Clarity & Conciseness:** The tweet must be **under 200 characters**. This is a strict rule; do not exceed this limit.
+3.  **Clean Structure & Formatting:**
+     * **Focus on cleanliness** - avoid cluttered, run-on sentences
+     * **Use bullet points or line breaks** when presenting multiple features/updates
+     * **Keep it scannable** - developers should quickly understand what's new
+     * **One main point per line** when using line breaks
+     * **Avoid cramming too much information** into a single sentence
+4.  **Dynamic Tone & Style:**
+     * **Tone:** Adhere strictly to the "${toneInstructions.tone}".
+     * **Style:** Adhere strictly to the "${toneInstructions.style}".
+     * **Formality:** Maintain the formality level specified by "${toneInstructions.formality}".
+5.  **Audience:** Tailor the content for the "${toneInstructions.audience}".
+6.  **Engagement & Authenticity:**
+     * **Include project name if needed** (${commitContext.repository}) in tweet to provide context about which project the updates are for.
+     * Highlight the **value** or **improvement** these features bring to the user experience.
+     * Avoid clickbait, excessive exclamations, or over-the-top "hype" language.
+     * Use **minimal and strategic emojis (0-2 max)**, only when they genuinely enhance clarity or tone without being decorative or random.
+     * The tweet should feel authentic, not salesy, reflecting genuine development progress.
+     * Do **not** include a call to action or question.
+7.  **Keywords (if provided):** If "${toneInstructions.keywords}" are present, subtly integrate them.
+8.  **Write as if you're a developer sharing an exciting update with fellow tech enthusiasts.
+     * Use natural, colloquial expressions that real developers would use in everyday conversation.
+     * Avoid overly casual or forced humor that might undermine the importance of the update.
+     * Ensure that the content is interesting and relevant to your target audience of developers and tech enthusiasts.
+9.  **Attribution:** Conclude the tweet by tagging "@arweaveIndia" on a new line after the main tweet content.
+
+---
+
+### **Strict Requirements:**
+* **Length:** UNDER 200 characters.
+* **Dynamic Tone:** Apply "${toneInstructions.tone}".
+* **Dynamic Style:** Apply "${toneInstructions.style}".
+* **Dynamic Audience:** Target "${toneInstructions.audience}".
+* **Dynamic Formality:** Adhere to "${toneInstructions.formality}".
+* **Emoji Use:** Minimal and strategic (0-2 max).
+* **Exclamations/Hype:** Avoid.
+* **Call to Action/Question:** Do not include.
+
+Generate the tweet now`;
+
+                        generatedTweet = await generateTweet(prompt);
+                        
+                        if (!generatedTweet) {
+                            console.warn(`⚠️ LLM returned empty content for user: ${githubUsername}`);
+                            // Use fallback tweet generation
+                            generatedTweet = generateFallbackTweet(commitContext);
+                        }
+                        
+                        console.log(`✅ Generated tweet for ${githubUsername}:`, generatedTweet.substring(0, 100) + '...');
+                        
+                    } catch (tweetError) {
+                        console.error(`❌ Error generating tweet for ${githubUsername}:`, tweetError);
+                        // Use fallback tweet generation
+                        const commitContext = {
+                            repository: repository.full_name,
+                            message: newCommits[newCommits.length - 1],
+                            author: githubUsername,
+                            commitType: detectCommitType(newCommits[newCommits.length - 1]),
+                            stats: {
+                                changedFiles: commits.length,
+                                additions: commits.reduce((sum, c) => sum + (c.stats?.additions || 0), 0),
+                                deletions: commits.reduce((sum, c) => sum + (c.stats?.deletions || 0), 0),
+                                filesAdded: commits.reduce((sum, c) => sum + (c.added?.length || 0), 0),
+                                filesModified: commits.reduce((sum, c) => sum + (c.modified?.length || 0), 0),
+                                filesRemoved: commits.reduce((sum, c) => sum + (c.removed?.length || 0), 0)
+                            }
+                        };
+                        generatedTweet = generateFallbackTweet(commitContext);
+                        console.log(`🔄 Using fallback tweet for ${githubUsername}`);
+                    }
+                }
+
+                // Update user record to add commit messages and generated tweet
+                const updateQuery = 'UPDATE x_credentials SET commits = $1, generated_msg = $2 WHERE github_username = $3 RETURNING *';
+                const updateResult = await client.query(updateQuery, [updatedCommits, generatedTweet, githubUsername]);
 
                 console.log(`✅ ${newCommits.length} commit messages stored successfully for user: ${githubUsername}`);
                 console.log(`📊 Total commits stored: ${updatedCommits.length}`);
@@ -479,6 +597,82 @@ app.get("/all_user", async (req, res) => {
     } catch (e) {
         console.log("this is the error ", e)
         res.status(400).json({ msg: "internal server issue " })
+    }
+})
+
+// Get generated tweet for a specific user
+app.get("/generated_tweet/:github_username", async (req, res) => {
+    try {
+        const { github_username } = req.params;
+        
+        if (!github_username) {
+            return res.status(400).json({ msg: "GitHub username is required" });
+        }
+
+        const client = await pool.connect();
+        
+        try {
+            const query = `
+                SELECT github_username, generated_msg, commits, tone, created_at 
+                FROM x_credentials 
+                WHERE github_username = $1
+            `;
+            
+            const result = await client.query(query, [github_username]);
+            
+            if (result.rows.length === 0) {
+                return res.status(404).json({ msg: "User not found" });
+            }
+            
+            const userData = result.rows[0];
+            
+            res.status(200).json({
+                 generated_msg: userData.generated_msg,
+            });
+            
+        } finally {
+            client.release();
+        }
+        
+    } catch (error) {
+        console.error("Error retrieving generated tweet:", error);
+        res.status(500).json({ msg: "Internal server error: " + error.message });
+    }
+})
+
+app.put("/update_generated_msg/:github_username", async (req, res) => {
+    try {
+        const { github_username } = req.params;
+        const { generated_msg } = req.body;
+        const client = await pool.connect();
+        try {
+            const updateQuery = `UPDATE x_credentials SET generated_msg = $1 WHERE github_username = $2`;
+            await client.query(updateQuery, [generated_msg, github_username]);
+            res.status(200).json({ msg: "Generated message updated successfully" });
+        } finally {
+            client.release();
+        }
+    } catch (error) {
+        console.error("Error updating generated message:", error);
+        res.status(500).json({ msg: "Internal server error: " + error.message });
+    }
+})
+
+app.delete("/delete_generated_msg/:github_username", async (req, res) => {
+    try {
+        const { github_username } = req.params;
+        const client = await pool.connect();
+        try {
+            const updateQuery = `UPDATE x_credentials SET generated_msg = NULL WHERE github_username = $1`;
+            await client.query(updateQuery, [github_username]);
+
+            res.status(200).json({ msg: "Generated message cleared successfully" });
+        } finally {
+            client.release();
+        }
+    } catch (error) {
+        console.error("Error clearing generated message:", error);
+        res.status(500).json({ msg: "Internal server error: " + error.message });
     }
 })
 
@@ -526,24 +720,21 @@ app.post("/cron_post", async (req, res) => {
                         continue;
                     }
 
-                    // Get the latest commit or combine multiple commits
-                    const latestCommit = user.commits[user.commits.length - 1];
-                    const recentCommits = user.commits.slice(-3); // Get last 3 commits
-
-                    console.log(`📝 Processing ${recentCommits.length} recent commits for ${user.github_username}`);
-
-                    // Create tweet content based on user's tone settings and commits
-                    const tweetContent = await generateCronTweet(recentCommits, user);
-
-                    if (!tweetContent) {
-                        console.log(`❌ Failed to generate tweet for user: ${user.github_username}`);
+                    // Check if user has a generated message to post
+                    if (!user.generated_msg) {
+                        console.log(`⏭️ No generated message found for user: ${user.github_username}`);
                         results.push({
                             user: user.github_username,
-                            status: 'failed',
-                            reason: 'Tweet generation failed'
+                            status: 'skipped',
+                            reason: 'No generated message found'
                         });
                         continue;
                     }
+
+                    console.log(`📝 Using generated message for ${user.github_username}`);
+                    const tweetContent = user.generated_msg;
+
+                    console.log(`📱 Tweet content for ${user.github_username}:`, tweetContent.substring(0, 100) + '...');
 
                     // Create Twitter client for this user
                     const twitterCredentials = {
@@ -562,8 +753,8 @@ app.post("/cron_post", async (req, res) => {
                         console.log(`✅ Tweet posted successfully for ${user.github_username}`);
                         console.log(`📱 Tweet ID: ${tweet.data.id}`);
 
-                        // Clear processed commits from database
-                        await clearProcessedCommits(user.github_username, client);
+                        // Clear processed commits and generated message from database
+                        await clearProcessedCommitsAndGeneratedMsg(user.github_username, client);
 
                         results.push({
                             user: user.github_username,
@@ -584,12 +775,12 @@ app.post("/cron_post", async (req, res) => {
             }
 
             console.log('\n📈 Cron job completed');
-            console.log(`✅ Successfully processed: ${results.filter(r => r.status === 'success').length}`);
+            console.log(`✅ Successfully posted: ${results.filter(r => r.status === 'success').length}`);
             console.log(`❌ Failed: ${results.filter(r => r.status === 'failed').length}`);
             console.log(`⏭️ Skipped: ${results.filter(r => r.status === 'skipped').length}`);
 
             res.status(200).json({
-                msg: "Cron job completed successfully",
+                msg: "Cron job completed successfully - posted generated messages and cleared database",
                 summary: {
                     totalUsers: finalUsers.length,
                     successful: results.filter(r => r.status === 'success').length,
@@ -773,7 +964,92 @@ Progress feels good! 📈
     return randomTemplate;
 }
 
-// Helper function to clear processed commits
+// Helper function to clear processed commits and generated message
+async function clearProcessedCommitsAndGeneratedMsg(githubUsername, client) {
+    try {
+        // First, get the current tone settings
+        const getCurrentToneQuery = 'SELECT tone FROM x_credentials WHERE github_username = $1';
+        const result = await client.query(getCurrentToneQuery, [githubUsername]);
+
+        let updatedTone = null;
+
+        if (result.rows.length > 0 && result.rows[0].tone) {
+            try {
+                // Parse the existing tone JSON
+                const currentTone = JSON.parse(result.rows[0].tone);
+
+                // Update the keywords field to null
+                const updatedToneSettings = {
+                    ...currentTone,
+                    keywords: null
+                };
+
+                // Convert back to JSON string
+                updatedTone = JSON.stringify(updatedToneSettings);
+            } catch (parseError) {
+                console.warn(`⚠️ Error parsing tone for ${githubUsername}, resetting to default:`, parseError);
+
+                // Create default tone settings with keywords set to null
+                const defaultTone = {
+                    style: [],
+                    tone: [],
+                    audience: '',
+                    formality: '',
+                    length: '',
+                    keywords: null,
+                    brandVoice: '',
+                    emotionalTone: '',
+                    contentType: '',
+                    callToAction: '',
+                    targetEngagement: '',
+                    industry: '',
+                    hashtagStyle: ''
+                };
+
+                updatedTone = JSON.stringify(defaultTone);
+            }
+        } else {
+            // If no tone exists, create default tone settings
+            const defaultTone = {
+                style: [],
+                tone: [],
+                audience: '',
+                formality: '',
+                length: '',
+                keywords: null,
+                brandVoice: '',
+                emotionalTone: '',
+                contentType: '',
+                callToAction: '',
+                targetEngagement: '',
+                industry: '',
+                hashtagStyle: ''
+            };
+
+            updatedTone = JSON.stringify(defaultTone);
+        }
+
+        // Clear commits, generated message, and update tone in a single query
+        const clearQuery = 'UPDATE x_credentials SET commits = $1, generated_msg = $2, tone = $3 WHERE github_username = $4';
+        await client.query(clearQuery, [[], null, updatedTone, githubUsername]);
+
+        console.log(`🧹 Cleared commits, generated message, and reset tone.keywords for user: ${githubUsername}`);
+
+    } catch (error) {
+        console.error(`❌ Error clearing commits, generated message, and updating tone for ${githubUsername}:`, error);
+
+        // Fallback: just clear commits and generated message if tone update fails
+        try {
+            const fallbackQuery = 'UPDATE x_credentials SET commits = $1, generated_msg = $2 WHERE github_username = $3';
+            await client.query(fallbackQuery, [[], null, githubUsername]);
+            console.log(`🔄 Fallback: Only cleared commits and generated message for user: ${githubUsername}`);
+        } catch (fallbackError) {
+            console.error(`❌ Fallback also failed for ${githubUsername}:`, fallbackError);
+        }
+    }
+}
+
+// Helper function to clear processed commits (keeping for backward compatibility)
 async function clearProcessedCommits(githubUsername, client) {
     try {
         // First, get the current tone settings
