@@ -430,8 +430,8 @@ app.post('/webhook', async (req, res) => {
 
                 // Create commit message with repository info
                 const commitMessage = `${latestCommit.message}`;
-                const repoName = repository.name; // Get repository name
-                const commitWithRepo = `${commitMessage} (${repoName})`;
+                // const repoName = repository.name; // Get repository name
+                const commitWithRepo = `${commitMessage}`;
 
                 // Get current commits array and add new commit
                 const currentCommits = userRecord.commits || [];
